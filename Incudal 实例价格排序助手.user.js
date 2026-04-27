@@ -121,7 +121,7 @@
         #${PANEL_ID}.collapsed .panel-shell { display: none; }
         #${PANEL_ID}.collapsed .collapsed-icon { display: grid; }
         .collapsed-icon { display: none; width: 42px; height: 42px; place-items: center; border-radius: 16px; color: #fff; background: linear-gradient(135deg, var(--ih-primary), var(--ih-purple)); }
-        .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px 18px 14px; cursor: move; user-select: none; border-bottom: 1px solid var(--ih-line); }
+        .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px 18px 14px; cursor: ns-resize; user-select: none; border-bottom: 1px solid var(--ih-line); }
         .header-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
         .brand-mark { width: 42px; height: 42px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 16px; color: #fff; background: linear-gradient(135deg, var(--ih-primary), var(--ih-purple)); box-shadow: 0 14px 34px rgba(37,99,235,.22); }
         .brand-mark svg { width: 24px; height: 24px; }
@@ -309,9 +309,7 @@
             hideSoldOut: state.hideSoldOut,
             theme: state.theme,
             collapsed: state.collapsed,
-            left: panel?.style.left || '',
             top: panel?.style.top || '',
-            right: panel?.style.right || '',
         }));
     }
 
@@ -326,12 +324,8 @@
             state.theme = saved.theme === 'dark' ? 'dark' : 'light';
             state.collapsed = Boolean(saved.collapsed);
             panel.dataset.theme = state.theme;
-            if (saved.left && saved.top) {
-                panel.style.left = saved.left;
-                panel.style.top = saved.top;
-                panel.style.right = saved.right || 'auto';
-            }
             panel.classList.toggle('collapsed', state.collapsed);
+            pinPanelToRight(panel, parseFloat(saved.top) || 72);
         } catch (error) {
             localStorage.removeItem(STATE_KEY);
         }
@@ -803,29 +797,23 @@
         loadData();
     }
 
-    /** 绑定展开态标题拖拽和折叠态图标吸附。 */
+    /** 绑定右侧固定轨道上的垂直拖拽。 */
     function bindDrag(panel) {
         const header = panel.querySelector('.panel-header');
         const collapsedIcon = panel.querySelector('.collapsed-icon');
         let dragging = false;
         let moved = false;
-        let startX = 0;
         let startY = 0;
-        let panelX = 0;
         let panelY = 0;
 
         const startDrag = (event) => {
             if (!panel.classList.contains('collapsed') && event.target.closest('.icon-button')) return;
             dragging = true;
             moved = false;
-            startX = event.clientX;
             startY = event.clientY;
             const rect = panel.getBoundingClientRect();
-            panelX = rect.left;
             panelY = rect.top;
-            panel.style.left = `${panelX}px`;
-            panel.style.top = `${panelY}px`;
-            panel.style.right = 'auto';
+            pinPanelToRight(panel, panelY);
             panel.classList.add('dragging');
             event.preventDefault();
         };
@@ -834,11 +822,9 @@
         collapsedIcon.addEventListener('mousedown', startDrag);
         document.addEventListener('mousemove', (event) => {
             if (!dragging) return;
-            const deltaX = event.clientX - startX;
             const deltaY = event.clientY - startY;
-            moved = moved || Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4;
-            panel.style.left = `${Math.max(8, Math.min(window.innerWidth - panel.offsetWidth - 8, panelX + deltaX))}px`;
-            panel.style.top = `${Math.max(8, Math.min(window.innerHeight - panel.offsetHeight - 8, panelY + deltaY))}px`;
+            moved = moved || Math.abs(deltaY) > 4;
+            pinPanelToRight(panel, panelY + deltaY);
         });
         document.addEventListener('mouseup', () => {
             if (!dragging) return;
@@ -852,28 +838,28 @@
         });
     }
 
-    /** 从折叠图标展开时防止面板出界。 */
+    /** 从折叠图标展开时保持右侧固定，只沿垂直方向夹取位置。 */
     function expandFromIcon(panel) {
         const rect = panel.getBoundingClientRect();
-        const centerX = rect.left + rect.width / 2;
         const centerY = rect.top + rect.height / 2;
         state.collapsed = false;
         panel.classList.remove('collapsed');
-        const left = Math.max(SNAP_MARGIN, Math.min(window.innerWidth - panel.offsetWidth - SNAP_MARGIN, centerX - panel.offsetWidth / 2));
-        const top = Math.max(SNAP_MARGIN, Math.min(window.innerHeight - panel.offsetHeight - SNAP_MARGIN, centerY - 28));
-        panel.style.left = `${left}px`;
-        panel.style.top = `${top}px`;
-        panel.style.right = 'auto';
+        pinPanelToRight(panel, centerY - 28);
     }
 
-    /** 折叠态拖拽结束后吸附到左右侧边。 */
+    /** 折叠态拖拽结束后固定吸附到右侧。 */
     function snapCollapsed(panel) {
         const rect = panel.getBoundingClientRect();
-        const left = rect.left + rect.width / 2 < window.innerWidth / 2 ? SNAP_MARGIN : window.innerWidth - rect.width - SNAP_MARGIN;
-        const top = Math.max(SNAP_MARGIN, Math.min(window.innerHeight - rect.height - SNAP_MARGIN, rect.top));
-        panel.style.left = `${left}px`;
-        panel.style.top = `${top}px`;
-        panel.style.right = 'auto';
+        pinPanelToRight(panel, rect.top);
+    }
+
+    /** 将面板锁定在右侧，并仅允许 top 在可视区域内变化。 */
+    function pinPanelToRight(panel, top) {
+        const maxTop = Math.max(SNAP_MARGIN, window.innerHeight - panel.offsetHeight - SNAP_MARGIN);
+        const nextTop = Math.max(SNAP_MARGIN, Math.min(maxTop, top));
+        panel.style.left = 'auto';
+        panel.style.right = `${SNAP_MARGIN}px`;
+        panel.style.top = `${nextTop}px`;
     }
 
     // ==================== 启动 ====================
