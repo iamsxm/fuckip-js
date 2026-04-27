@@ -23,6 +23,7 @@
 
     // ==================== 状态 ====================
     const state = {
+        source: 'official',
         packages: [],
         regions: [],
         combos: [],
@@ -43,6 +44,11 @@
         moon: '<svg viewBox="0 0 24 24"><path d="M12 3a6.4 6.4 0 0 0 8.9 8.4A8.8 8.8 0 1 1 12 3Z"/></svg>',
         sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
         search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>',
+    };
+
+    const SOURCE_LABELS = {
+        official: '面板直营',
+        market: '托管市场',
     };
 
     // ==================== 样式 ====================
@@ -134,6 +140,10 @@
         .summary-value { display: block; color: var(--ih-text); font: 950 15px/1 'Fira Code', Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .summary-value.good { color: var(--ih-success); }
         .summary-value.warn { color: var(--ih-warning); }
+        .source-tabs { display: flex; gap: 8px; padding: 12px 16px 0; }
+        .source-tab { flex: 1; min-height: 42px; border: 1px solid var(--ih-line); border-radius: 999px; background: var(--ih-panel); color: var(--ih-soft); font: 900 13px/1.1 Inter, sans-serif; cursor: pointer; transition: all .18s ease; }
+        .source-tab.active { background: linear-gradient(135deg, var(--ih-primary), var(--ih-purple)); color: #fff; border-color: transparent; box-shadow: 0 12px 28px rgba(37,99,235,.18); }
+        .source-tab:hover { transform: translateY(-1px); }
         .toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--ih-line); }
         .field { min-width: 0; }
         .field.wide { grid-column: 1 / -1; }
@@ -293,6 +303,7 @@
     /** 持久化筛选、主题、折叠和位置。 */
     function saveState(panel) {
         localStorage.setItem(STATE_KEY, JSON.stringify({
+            source: state.source,
             sort: state.sort,
             region: state.region,
             hideSoldOut: state.hideSoldOut,
@@ -308,6 +319,7 @@
     function restoreState(panel) {
         try {
             const saved = JSON.parse(localStorage.getItem(STATE_KEY) || '{}');
+            state.source = saved.source === 'market' ? 'market' : 'official';
             state.sort = saved.sort || state.sort;
             state.region = saved.region || state.region;
             state.hideSoldOut = Boolean(saved.hideSoldOut);
@@ -367,6 +379,10 @@
                     ${summaryItem('MIN/MO', '--', 'ih-min', 'warn')}
                     ${summaryItem('REGIONS', '--', 'ih-regions')}
                 </div>
+                <div class="source-tabs" role="tablist" aria-label="来源切换">
+                    <button class="source-tab active" id="ih-source-official" type="button" data-source="official">${SOURCE_LABELS.official}</button>
+                    <button class="source-tab" id="ih-source-market" type="button" data-source="market">${SOURCE_LABELS.market}</button>
+                </div>
                 <div class="toolbar">
                     <div class="field">
                         <label for="ih-sort">排序</label>
@@ -418,6 +434,9 @@
         const hideSold = document.getElementById('ih-hide-sold');
         if (sort) sort.value = state.sort;
         if (hideSold) hideSold.checked = state.hideSoldOut;
+        document.querySelectorAll(`#${PANEL_ID} .source-tab`).forEach((button) => {
+            button.classList.toggle('active', button.dataset.source === state.source);
+        });
     }
 
     // ==================== 数据 ====================
@@ -438,8 +457,8 @@
 
         try {
             const [packagesData, regionsData] = await Promise.all([
-                apiGet('/packages?source=official'),
-                apiGet('/packages/regions?source=official'),
+                apiGet(`/packages?source=${encodeURIComponent(state.source)}`),
+                apiGet(`/packages/regions?source=${encodeURIComponent(state.source)}`),
             ]);
             state.packages = packagesData.packages || [];
             state.regions = regionsData.regions || [];
@@ -475,6 +494,8 @@
             planId: plan.id,
             packageName: pkg.name,
             packageDescription: pkg.description,
+            packageSource: pkg.sourceType || state.source,
+            ownerUsername: pkg.ownerUsername || '',
             planName: plan.name,
             planDescription: plan.description,
             regionCode: region?.code || 'unknown',
@@ -612,6 +633,8 @@
                     <span class="price">${formatMoney(combo.monthlyPrice)}/mo</span>
                     <div class="tags">
                         <span class="tag">${formatMoney(combo.price)} ${formatCycle(combo.cycle)}</span>
+                        <span class="tag">${SOURCE_LABELS[combo.packageSource] || SOURCE_LABELS[state.source] || combo.packageSource}</span>
+                        ${combo.ownerUsername ? `<span class="tag">UID ${escapeHtml(combo.ownerUsername)}</span>` : ''}
                         <span class="tag">${formatType(combo.type)}</span>
                         <span class="tag">${combo.nested ? '可嵌套' : '不可嵌套'}</span>
                         <span class="tag">SLA ${combo.sla ?? '-'}%</span>
@@ -677,16 +700,33 @@
         return true;
     }
 
+    /** 等待页面中出现对应可点击文本，避免首次切换来源后页面未渲染完成。 */
+    async function waitForClickableText(text, timeoutMs = 4000, intervalMs = 120) {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < timeoutMs) {
+            if (findClickableText(text)) return true;
+            await sleep(intervalMs);
+        }
+        return false;
+    }
+
     /** 点击助手卡片后，依次选择套餐和方案。 */
     async function selectCombo(packageId, planId) {
         const combo = state.combos.find((item) => String(item.packageId) === String(packageId) && String(item.planId) === String(planId));
         if (!combo || combo.soldOut) return;
 
+        setStatus('SWITCH SOURCE...', 'info');
+        if (await clickText(SOURCE_LABELS[state.source])) {
+            await waitForClickableText(combo.packageName, 5000);
+        }
+
         setStatus('SELECT PACKAGE...', 'info');
+        await waitForClickableText(combo.packageName, 5000);
         const packageClicked = await clickText(combo.packageName);
-        await sleep(packageClicked ? 500 : 120);
+        if (packageClicked) await waitForClickableText(combo.planName, 5000);
 
         setStatus('SELECT PLAN...', 'info');
+        await waitForClickableText(combo.planName, 5000);
         const planClicked = await clickText(combo.planName);
         setStatus(planClicked ? 'SELECTED' : 'DOM SYNC FAIL', planClicked ? 'ok' : 'error');
         setTimeout(() => setStatus('AUTO 3m'), 2500);
@@ -701,6 +741,8 @@
 
     /** 绑定筛选、主题、刷新、折叠、卡片选择事件。 */
     function bindEvents(panel) {
+        document.getElementById('ih-source-official').addEventListener('click', () => switchSource(panel, 'official'));
+        document.getElementById('ih-source-market').addEventListener('click', () => switchSource(panel, 'market'));
         document.getElementById('ih-sort').addEventListener('change', (event) => {
             state.sort = event.target.value;
             renderCombos();
@@ -743,6 +785,22 @@
             selectCombo(card.dataset.packageId, card.dataset.planId);
         });
         bindDrag(panel);
+    }
+
+    /** 切换“面板直营/托管市场”来源，并清空地区与搜索后重新拉取数据。 */
+    function switchSource(panel, source) {
+        if (state.source === source) return;
+        state.source = source;
+        state.region = 'all';
+        state.keyword = '';
+        document.querySelectorAll(`#${PANEL_ID} .source-tab`).forEach((button) => {
+            button.classList.toggle('active', button.dataset.source === source);
+        });
+        const search = document.getElementById('ih-search');
+        if (search) search.value = '';
+        setStatus(`SOURCE ${SOURCE_LABELS[source] || source}`, 'info');
+        saveState(panel);
+        loadData();
     }
 
     /** 绑定展开态标题拖拽和折叠态图标吸附。 */
