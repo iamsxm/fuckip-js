@@ -162,7 +162,7 @@
             justify-content: space-between;
             gap: 16px;
             padding: 18px 18px 14px;
-            cursor: move;
+            cursor: ns-resize;
             user-select: none;
             background: linear-gradient(180deg, rgba(255,255,255,.08), transparent);
             border-bottom: 1px solid var(--ns-line);
@@ -480,9 +480,7 @@
             hideSoldOut: state.hideSoldOut,
             theme: state.theme,
             collapsed: state.collapsed,
-            left: panel?.style.left || '',
             top: panel?.style.top || '',
-            right: panel?.style.right || '',
         };
         localStorage.setItem(STATE_KEY, JSON.stringify(payload));
     }
@@ -497,12 +495,8 @@
             state.theme = saved.theme === 'light' ? 'light' : 'dark';
             state.collapsed = Boolean(saved.collapsed);
             panel.dataset.theme = state.theme;
-            if (saved.left && saved.top) {
-                panel.style.left = saved.left;
-                panel.style.top = saved.top;
-                panel.style.right = saved.right || 'auto';
-            }
             panel.classList.toggle('collapsed', state.collapsed);
+            pinPanelToRight(panel, parseFloat(saved.top) || 72);
         } catch (error) {
             localStorage.removeItem(STATE_KEY);
         }
@@ -924,29 +918,23 @@
         bindDrag(panel);
     }
 
-    /** 绑定展开态标题栏拖拽与折叠态图标拖拽吸附。 */
+    /** 绑定右侧固定轨道上的垂直拖拽。 */
     function bindDrag(panel) {
         const header = panel.querySelector('.panel-header');
         const collapsedIcon = panel.querySelector('.panel-collapsed-icon');
         let dragging = false;
         let moved = false;
-        let startX = 0;
         let startY = 0;
-        let panelX = 0;
         let panelY = 0;
 
         const startDrag = (event) => {
             if (!panel.classList.contains('collapsed') && event.target.closest('.icon-button')) return;
             dragging = true;
             moved = false;
-            startX = event.clientX;
             startY = event.clientY;
             const rect = panel.getBoundingClientRect();
-            panelX = rect.left;
             panelY = rect.top;
-            panel.style.left = `${panelX}px`;
-            panel.style.top = `${panelY}px`;
-            panel.style.right = 'auto';
+            pinPanelToRight(panel, panelY);
             panel.classList.add('dragging');
             event.preventDefault();
         };
@@ -956,13 +944,9 @@
 
         document.addEventListener('mousemove', (event) => {
             if (!dragging) return;
-            const deltaX = event.clientX - startX;
             const deltaY = event.clientY - startY;
-            moved = moved || Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4;
-            const nextLeft = Math.max(8, Math.min(window.innerWidth - panel.offsetWidth - 8, panelX + deltaX));
-            const nextTop = Math.max(8, Math.min(window.innerHeight - panel.offsetHeight - 8, panelY + deltaY));
-            panel.style.left = `${nextLeft}px`;
-            panel.style.top = `${nextTop}px`;
+            moved = moved || Math.abs(deltaY) > 4;
+            pinPanelToRight(panel, panelY + deltaY);
         });
 
         document.addEventListener('mouseup', () => {
@@ -980,34 +964,30 @@
         });
     }
 
-    /** 从折叠图标展开面板时，按图标中心点定位并夹取到浏览器可视区域内。 */
+    /** 从折叠图标展开面板时保持右侧固定，只沿垂直方向夹取位置。 */
     function expandPanelFromCollapsedIcon(panel) {
         const iconRect = panel.getBoundingClientRect();
-        const iconCenterX = iconRect.left + iconRect.width / 2;
         const iconCenterY = iconRect.top + iconRect.height / 2;
 
         state.collapsed = false;
         panel.classList.remove('collapsed');
 
-        const expandedWidth = panel.offsetWidth;
-        const expandedHeight = panel.offsetHeight;
-        const nextLeft = Math.max(SNAP_MARGIN, Math.min(window.innerWidth - expandedWidth - SNAP_MARGIN, iconCenterX - expandedWidth / 2));
-        const nextTop = Math.max(SNAP_MARGIN, Math.min(window.innerHeight - expandedHeight - SNAP_MARGIN, iconCenterY - 28));
-
-        panel.style.left = `${nextLeft}px`;
-        panel.style.top = `${nextTop}px`;
-        panel.style.right = 'auto';
+        pinPanelToRight(panel, iconCenterY - 28);
     }
 
-    /** 折叠图标松手后吸附到最近侧边，同时限制在可视区域内。 */
+    /** 折叠图标松手后固定吸附到右侧。 */
     function snapCollapsedPanel(panel) {
         const rect = panel.getBoundingClientRect();
-        const snapLeft = rect.left + rect.width / 2 < window.innerWidth / 2;
-        const nextLeft = snapLeft ? SNAP_MARGIN : window.innerWidth - rect.width - SNAP_MARGIN;
-        const nextTop = Math.max(SNAP_MARGIN, Math.min(window.innerHeight - rect.height - SNAP_MARGIN, rect.top));
-        panel.style.left = `${nextLeft}px`;
+        pinPanelToRight(panel, rect.top);
+    }
+
+    /** 将面板锁定在右侧，并仅允许 top 在可视区域内变化。 */
+    function pinPanelToRight(panel, top) {
+        const maxTop = Math.max(SNAP_MARGIN, window.innerHeight - panel.offsetHeight - SNAP_MARGIN);
+        const nextTop = Math.max(SNAP_MARGIN, Math.min(maxTop, top));
+        panel.style.left = 'auto';
+        panel.style.right = `${SNAP_MARGIN}px`;
         panel.style.top = `${nextTop}px`;
-        panel.style.right = 'auto';
     }
 
     // ==================== 启动 ====================
